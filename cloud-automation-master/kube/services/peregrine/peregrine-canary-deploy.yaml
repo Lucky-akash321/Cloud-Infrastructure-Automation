@@ -1,0 +1,159 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: peregrine-canary-deployment
+spec:
+  selector:
+    # Only select pods based on the 'app' label
+    matchLabels:
+      app: peregrine
+      release: canary
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: peregrine
+        release: canary
+        public: "yes"
+        # to download dictionary
+        s3: "yes"
+        GEN3_DATE_LABEL
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 25
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - peregrine
+              topologyKey: "kubernetes.io/hostname"
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: karpenter.sh/capacity-type
+                operator: In
+                values:
+                - spot
+          - weight: 99
+            preference:
+              matchExpressions:
+              - key: eks.amazonaws.com/capacityType
+                operator: In
+                values:
+                - SPOT
+      automountServiceAccountToken: false
+      volumes:
+        - name: shared-data
+          emptyDir: {}
+        - name: config-volume
+          secret:
+            secretName: "peregrine-secret"
+        - name: creds-volume
+          secret:
+            secretName: "peregrine-creds"
+        - name: config-helper
+          configMap:
+            name: config-helper
+        - name: cert-volume
+          secret:
+            secretName: "cert-peregrine-service"
+        - name: ca-volume
+          secret:
+            secretName: "service-ca"
+      containers:
+        - name: peregrine
+          GEN3_PEREGRINE-CANARY_IMAGE|-GEN3_PEREGRINE_IMAGE-|
+          ports:
+          - containerPort: 80
+          - containerPort: 443
+          env:
+          - name: DICTIONARY_URL
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-global
+                key: dictionary_url
+          - name: PUBLIC_DATASETS
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-global
+                key: public_datasets
+                optional: true
+          # Signpost is deprecated; replace this w INDEX_CLIENT_HOST block
+          - name: SIGNPOST_HOST
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-global
+                key: indexd_url
+                optional: true
+          - name: INDEX_CLIENT_HOST
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-global
+                key: indexd_url
+                optional: true
+          - name: GRAPHQL_TIMEOUT
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-peregrine
+                key: peregrine_timeout
+                optional: true
+          - name: FENCE_URL
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-global
+                key: fence_url
+                optional: true
+          - name: GEN3_DEBUG
+            GEN3_DEBUG_FLAG|-value: "False"-|
+          - name: GEN3_SIDECAR
+            value: "False"
+          volumeMounts:
+            - name: "shared-data"
+              mountPath: "/var/run/gen3"
+            - name: "config-volume"
+              readOnly: true
+              mountPath: "/var/www/peregrine/wsgi.py"
+              subPath: "wsgi.py"
+            - name: "creds-volume"
+              readOnly: true
+              mountPath: "/var/www/peregrine/creds.json"
+              subPath: creds.json
+            - name: "config-helper"
+              readOnly: true
+              mountPath: "/var/www/peregrine/config_helper.py"
+              subPath: config_helper.py
+            - name: "ca-volume"
+              # See https://askubuntu.com/questions/645818/how-to-install-certificates-for-command-line
+              readOnly: true
+              mountPath: "/usr/local/share/ca-certificates/cdis-ca.crt"
+              subPath: "ca.pem"
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: 1
+            limits:
+              cpu: 2
+              memory: 2048Mi
+          livenessProbe:
+            httpGet:
+              path: /_status?timeout=20
+              port: 80
+            # peregrine can take forever to initialize
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /_status?timeout=2
+              port: 80

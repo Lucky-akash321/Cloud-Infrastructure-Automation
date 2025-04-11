@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sftp-deployment
+spec:
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: sftp
+        GEN3_DATE_LABEL
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: karpenter.sh/capacity-type
+                operator: In
+                values:
+                - on-demand
+          - weight: 99
+            preference:
+              matchExpressions:
+              - key: eks.amazonaws.com/capacityType
+                operator: In
+                values:
+                - ONDEMAND
+      automountServiceAccountToken: false
+      volumes:
+        - name: sftp-secret
+          secret:
+            secretName: sftp-secret
+        - name: sftp-conf
+          configMap:
+            name: sftp-conf
+      containers:
+      - name: sftp
+        GEN3_SFTP_IMAGE|-image: quay.io/cdis/sftp:master-|
+        command: ["/bin/bash", "-c"]
+        args: ["cd /home/foo; for i in *.csv; do crypt $(cat dbgap-key) <$i >${i}.enc; done; /entrypoint"]
+        livenessProbe:
+          tcpSocket:
+            port: 22
+          initialDelaySeconds: 5
+          periodSeconds: 30
+        ports:
+        - containerPort: 22
+        volumeMounts:
+          - name: "sftp-secret"
+            readOnly: true
+            mountPath: "/home/foo/dbgap-key"
+            subPath: "dbgap-key"
+          - name: "sftp-conf"
+            readOnly: true
+            mountPath: "/etc/sftp/users.conf"
+            subPath: "users.conf"
+          - name: "sftp-conf"
+            readOnly: true
+            mountPath: "/home/foo/authentication_file_phs000178.csv"
+            subPath: "authentication_file_phs000178.csv"
+          - name: "sftp-conf"
+            readOnly: true
+            mountPath: "/home/foo/authentication_file_phs000179.csv"
+            subPath: "authentication_file_phs000179.csv"

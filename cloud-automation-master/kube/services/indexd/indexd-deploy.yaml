@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: indexd-deployment
+  annotations:
+    gen3.io/network-ingress: "fence,presigned-url-fence,fenceshib,peregrine,sheepdog,ssjdispatcherjob,metadata,mariner,mariner-engine"
+spec:
+  selector:
+    # Only select pods based on the 'app' label
+    matchLabels:
+      app: indexd
+      release: production
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        netnolimit: "yes"
+        app: indexd
+        release: production
+        public: "yes"
+        GEN3_ENV_LABEL
+        GEN3_INDEXD_VERSION
+        GEN3_DATE_LABEL
+        GEN3_HOSTNAME_LABEL
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 25
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - indexd
+              topologyKey: "kubernetes.io/hostname"
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: karpenter.sh/capacity-type
+                operator: In
+                values:
+                - spot
+          - weight: 99
+            preference:
+              matchExpressions:
+              - key: eks.amazonaws.com/capacityType
+                operator: In
+                values:
+                - SPOT
+      automountServiceAccountToken: false
+      volumes:
+        - name: config-volume
+          secret:
+            secretName: "indexd-secret"
+        - name: creds-volume
+          secret:
+            secretName: "indexd-creds"
+        - name: config-helper
+          configMap:
+            name: config-helper
+        - name: cert-volume
+          secret:
+            secretName: "cert-indexd-service"
+        - name: ca-volume
+          secret:
+            secretName: "service-ca"
+      containers:
+      - name: indexd
+        GEN3_INDEXD_IMAGE
+        env:
+          - name: GEN3_DEBUG
+            GEN3_DEBUG_FLAG|-value: "False"-|
+          - name: DIST
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-indexd
+                key: dist
+                optional: true
+          - name: ARBORIST
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-indexd
+                key: arborist
+                optional: true
+          - name: HOSTNAME
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-global
+                key: hostname
+        imagePullPolicy: Always
+        livenessProbe:
+          httpGet:
+            path: /_status
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /_status
+            port: 80
+        ports:
+        - containerPort: 80
+        - containerPort: 443
+        - containerPort: 6567
+        volumeMounts:
+          - name: "config-volume"
+            readOnly: true
+            mountPath: "/var/www/indexd/local_settings.py"
+            subPath: "local_settings.py"
+          - name: "creds-volume"
+            readOnly: true
+            mountPath: "/var/www/indexd/creds.json"
+            subPath: creds.json
+          - name: "config-helper"
+            readOnly: true
+            mountPath: "/var/www/indexd/config_helper.py"
+            subPath: config_helper.py
+          - name: "cert-volume"
+            readOnly: true
+            mountPath: "/mnt/ssl/service.crt"
+            subPath: "service.crt"
+          - name: "cert-volume"
+            readOnly: true
+            mountPath: "/mnt/ssl/service.key"
+            subPath: "service.key"
+          - name: "ca-volume"
+            # See https://askubuntu.com/questions/645818/how-to-install-certificates-for-command-line
+            readOnly: true
+            mountPath: "/usr/local/share/ca-certificates/cdis/cdis-ca.crt"
+            subPath: "ca.pem"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            memory: 1024Mi

@@ -1,0 +1,14 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: arranger-service
+spec:
+  selector:
+    app: arranger
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000 
+      name: http
+      nodePort: null
+  type: ClusterIP

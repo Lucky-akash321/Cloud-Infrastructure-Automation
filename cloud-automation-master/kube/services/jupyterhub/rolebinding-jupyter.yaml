@@ -1,0 +1,13 @@
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  JUPYTER_BINDING
+  NOTEBOOK_NAMESPACE
+subjects:
+- kind: ServiceAccount
+  name: jupyter-service
+  CURRENT_NAMESPACE
+roleRef:
+  kind: ClusterRole
+  name: jupyter
+  apiGroup: ""

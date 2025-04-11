@@ -1,0 +1,15 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: sftp-service
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: tcp 
+spec:
+  selector:
+    app: sftp
+  ports:
+    - protocol: TCP 
+      port: 22
+      targetPort: 22
+      name: sftp
+  type: LoadBalancer 

@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Little test job - run with: gen3 runjob envtest REUBEN frickjack
+  name: envtest
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: gen3job
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: karpenter.sh/capacity-type
+                operator: In
+                values:
+                - spot
+          - weight: 99
+            preference:
+              matchExpressions:
+              - key: eks.amazonaws.com/capacityType
+                operator: In
+                values:
+                - SPOT
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+      - name: fence
+        GEN3_AWSHELPER_IMAGE|-image: quay.io/cdis/awshelper:master-|
+        imagePullPolicy: Always
+        env:
+          - name: REUBEN
+            GEN3_REUBEN|-value: frickjack-|
+        command: ["/bin/bash" ]
+        args: 
+          - "-c"
+          # Script always succeeds if it runs (echo exits with 0) 
+          - |
+            echo "Rueben is a ${REUBEN}"
+            echo "Exit code: $?"

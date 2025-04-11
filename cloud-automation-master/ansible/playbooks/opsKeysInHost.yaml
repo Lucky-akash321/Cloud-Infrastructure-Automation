@@ -1,0 +1,12 @@
+- hosts: "{{ _hosts }}"
+  tasks:
+  - authorized_key:
+      user: "{{ _user }}"
+      state: present
+      manage_dir: true
+      key: '{{ lookup(''file'', item) }}'
+    loop:
+       - ../keys/emalinowski
+       - ../keys/jmazzone
+       - ../keys/qureshi
+       - ../keys/rarya

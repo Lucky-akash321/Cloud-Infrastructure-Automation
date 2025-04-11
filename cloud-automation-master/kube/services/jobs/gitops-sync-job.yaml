@@ -1,0 +1,70 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gitops-sync
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: gen3job
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: karpenter.sh/capacity-type
+                operator: In
+                values:
+                - on-demand
+          - weight: 99
+            preference:
+              matchExpressions:
+              - key: eks.amazonaws.com/capacityType
+                operator: In
+                values:
+                - ONDEMAND
+      restartPolicy: Never
+      serviceAccountName: gitops-sa
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: awshelper
+          # often do not want pinned awshelper in gitops-sync
+          GEN3_AUTOMATION_IMAGE|-image: quay.io/cdis/awshelper:master-|
+          imagePullPolicy: Always
+          env:
+            - name: gen3Env
+              valueFrom:
+                configMapKeyRef:
+                  name: global
+                  key: environment
+            - name: AWS_STS_REGIONAL_ENDPOINTS
+              value: regional      
+            - name: JENKINS_HOME
+              value: ""
+            - name: GEN3_NOPROXY
+              value: none
+            - name: KUBECTL_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          command: ["/bin/bash" ]
+          args:
+            - "-c"
+            - |
+              export GEN3_HOME="$HOME/cloud-automation"
+              source "$GEN3_HOME/gen3/gen3setup.sh"
+              cd "$GEN3_HOME"
+              export JENKINS_HOME=none
+              export vpc_name="$(g3kubectl get configmap global -o json | jq -r .data.environment)"
+              env
+              if gen3 klock lock gitops-sync gitops 1800; then
+                gen3 gitops sync --slack
+                gen3 klock unlock gitops-sync gitops
+              else
+                echo "Failed to acquire gitops-sync lock: exiting without attempting to sync"
+              fi
+              echo "Exit code: $?"

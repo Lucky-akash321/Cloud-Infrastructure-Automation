@@ -1,0 +1,14 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: guppy-service
+spec:
+  selector:
+    app: guppy
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+      nodePort: null
+      name: http
+  type: ClusterIP

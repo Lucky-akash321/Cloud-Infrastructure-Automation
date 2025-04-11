@@ -1,0 +1,190 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: arborist-deployment
+spec:
+  selector:
+    matchLabels:
+      app: arborist
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: arborist
+        internet: "yes"
+        # for network policy selectors
+        authprovider: "yes"
+        dbfence: "yes"
+        dbarborist: "yes"
+        # for revproxy authz
+        public: "yes"
+        GEN3_DATE_LABEL
+        GEN3_HOSTNAME_LABEL
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 25
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - arborist
+              topologyKey: "kubernetes.io/hostname"
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: karpenter.sh/capacity-type
+                operator: In
+                values:
+                - spot
+          - weight: 99
+            preference:
+              matchExpressions:
+              - key: eks.amazonaws.com/capacityType
+                operator: In
+                values:
+                - SPOT         
+      automountServiceAccountToken: false
+      volumes:
+# -----------------------------------------------------------------------------
+# DEPRECATED! Remove when all commons are no longer using local_settings.py
+#             for fence.
+# -----------------------------------------------------------------------------
+        - name: old-config-volume
+          secret:
+            secretName: "fence-secret"
+        - name: json-secret-volume
+          secret:
+            secretName: "fence-json-secret"
+        - name: creds-volume
+          secret:
+            secretName: "fence-creds"
+        - name: config-helper
+          configMap:
+            name: config-helper
+# -----------------------------------------------------------------------------
+        - name: config-volume
+          secret:
+            secretName: "fence-config"
+        - name: fence-google-app-creds-secret-volume
+          secret:
+            secretName: "fence-google-app-creds-secret"
+        - name: fence-google-storage-creds-secret-volume
+          secret:
+            secretName: "fence-google-storage-creds-secret"
+        - name: fence-ssh-keys
+          secret:
+            secretName: "fence-ssh-keys"
+            defaultMode: 0400
+        - name: fence-sshconfig
+          configMap:
+            name: "fence-sshconfig"
+        - name: projects
+          configMap:
+            name: "projects"
+        - name: yaml-merge
+          configMap:
+            name: "fence-yaml-merge"
+      containers:
+      - name: arborist
+        GEN3_ARBORIST_IMAGE
+        imagePullPolicy: Always
+        env:
+          - name: JWKS_ENDPOINT
+            value: "http://fence-service/.well-known/jwks"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          timeoutSeconds: 10
+        ports:
+        - containerPort: 80
+      - name: fence
+        # Mount fence pod to initialize the arborist db
+        GEN3_FENCE_IMAGE
+        imagePullPolicy: Always
+        env:
+          - name: PYTHONPATH
+            value: /var/www/fence
+          - name: SYNC_FROM_DBGAP
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-global
+                key: sync_from_dbgap
+          - name: FENCE_PUBLIC_CONFIG
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-fence
+                key: fence-config-public.yaml
+                optional: true
+        volumeMounts:
+          - name: "old-config-volume"
+            readOnly: true
+            mountPath: "/var/www/fence/local_settings.py.original"
+            subPath: local_settings.py
+          - name: "creds-volume"
+            readOnly: true
+            mountPath: "/var/www/fence/creds.json"
+            subPath: creds.json
+          - name: "config-volume"
+            readOnly: true
+            mountPath: "/var/www/fence/fence-config-secret.yaml"
+            subPath: fence-config.yaml
+          - name: "yaml-merge"
+            readOnly: true
+            mountPath: "/var/www/fence/yaml_merge.py"
+            subPath: yaml_merge.py
+          - name: "config-helper"
+            readOnly: true
+            mountPath: "/var/www/fence/config_helper.py"
+            subPath: config_helper.py
+          - name: "json-secret-volume"
+            readOnly: true
+            mountPath: "/var/www/fence/fence_credentials.json"
+            subPath: fence_credentials.json
+          - name: "fence-google-app-creds-secret-volume"
+            readOnly: true
+            mountPath: "/var/www/fence/fence_google_app_creds_secret.json"
+            subPath: fence_google_app_creds_secret.json
+          - name: "fence-google-storage-creds-secret-volume"
+            readOnly: true
+            mountPath: "/var/www/fence/fence_google_storage_creds_secret.json"
+            subPath: fence_google_storage_creds_secret.json
+          - name: "fence-ssh-keys"
+            mountPath: "/root/.ssh/id_rsa"
+            subPath: "id_rsa"
+          - name: "fence-ssh-keys"
+            mountPath: "/root/.ssh/id_rsa.pub"
+            subPath: "id_rsa.pub"
+          - name: "fence-sshconfig"
+            mountPath: "/root/.ssh/config"
+            subPath: "config"
+          - name: "projects"
+            mountPath: "/var/www/fence/projects.yaml"
+            subPath: "projects.yaml"
+        readinessProbe:
+          exec:
+            command:
+            - cat
+            - /tmp/healthy
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        command: ["/bin/bash" ]
+        args:
+          - "-c"
+          # Script always succeeds if it runs (echo exits with 0)
+          - |
+            echo "DEPRECATED - set arborist.deployment_version 2 in the manifest"
+            exit 1

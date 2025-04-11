@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-deployment
+  annotations:
+    gen3.io/network-ingress: "tube"
+spec:
+  selector:
+    # Only select pods based on the 'app' label
+    matchLabels:
+      app: spark
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: spark
+        dbsheepdog: "yes"
+        GEN3_DATE_LABEL
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 25
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - spark
+              topologyKey: "kubernetes.io/hostname"
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: karpenter.sh/capacity-type
+                operator: In
+                values:
+                - on-demand
+          - weight: 99
+            preference:
+              matchExpressions:
+              - key: eks.amazonaws.com/capacityType
+                operator: In
+                values:
+                - ONDEMAND
+      automountServiceAccountToken: false
+      volumes:
+      containers:
+        - name: gen3-spark
+          GEN3_SPARK_IMAGE
+          ports:
+          - containerPort: 22
+          - containerPort: 9000
+          - containerPort: 8030
+          - containerPort: 8031
+          - containerPort: 8032
+          - containerPort: 7077
+          livenessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          env:
+          - name: DICTIONARY_URL
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-global
+                key: dictionary_url
+          - name: HADOOP_URL
+            value: hdfs://0.0.0.0:9000
+          - name: HADOOP_HOST
+            value: 0.0.0.0
+          volumeMounts:
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: 2
+              memory: 2Gi
+          command: ["/bin/bash" ]
+          args: 
+            - "-c"
+            - |
+              python run_config.py
+              hdfs namenode -format
+              hdfs --daemon start namenode
+              hdfs --daemon start datanode
+              yarn --daemon start resourcemanager
+              yarn --daemon start nodemanager
+              hdfs dfsadmin -safemode leave
+              hdfs dfs -mkdir /result
+              hdfs dfs -mkdir /jars
+              hdfs dfs -mkdir /archive
+              /spark/sbin/start-all.sh
+              while true; do sleep 5; done

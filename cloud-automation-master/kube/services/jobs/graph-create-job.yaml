@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: graph-create
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: gen3job
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: karpenter.sh/capacity-type
+                operator: In
+                values:
+                - on-demand
+          - weight: 99
+            preference:
+              matchExpressions:
+              - key: eks.amazonaws.com/capacityType
+                operator: In
+                values:
+                - ONDEMAND
+      automountServiceAccountToken: false
+      volumes:
+        - name: creds-volume
+          secret:
+            secretName: "sheepdog-creds"
+      containers:
+        - name: sheepdog
+          image: quay.io/cdis/sheepdog:master
+          env:
+          - name: DICTIONARY_URL
+            valueFrom:
+              configMapKeyRef:
+                name: manifest-global
+                key: dictionary_url
+          volumeMounts:
+            - name: "creds-volume"
+              readOnly: true
+              mountPath: "/var/www/sheepdog/creds.json"
+              subPath: creds.json
+          imagePullPolicy: Always
+          command: ["/bin/bash" ]
+          args: 
+            - "-c" 
+            # Script always succeeds if it runs (echo exits with 0) 
+            - |
+              eval $( (python 2> /dev/null || poetry run python 2> /dev/null) <<EOM
+              import json
+
+              creds = json.load(open('/var/www/sheepdog/creds.json', 'r'))
+              print('declare -A db_creds')
+              for key in ['db_host', 'db_username', 'db_password', 'db_database']:
+                print("db_creds['%s']='%s'" % (key, creds[key]))
+              EOM
+              )
+              if command -v python &> /dev/null; then
+                echo datamodel_postgres_admin graph-create -U "${db_creds[db_username]}" -P XXXXXX -H "${db_creds[db_host]}" -D "${db_creds[db_database]}"
+                datamodel_postgres_admin graph-create -U "${db_creds[db_username]}" -P "${db_creds[db_password]}" -H "${db_creds[db_host]}" -D "${db_creds[db_database]}"
+                echo "Exit code: $?"
+              else
+                echo poetry run datamodel_postgres_admin graph-create -U "${db_creds[db_username]}" -P XXXXXX -H "${db_creds[db_host]}" -D "${db_creds[db_database]}"
+                poetry run datamodel_postgres_admin graph-create -U "${db_creds[db_username]}" -P "${db_creds[db_password]}" -H "${db_creds[db_host]}" -D "${db_creds[db_database]}"
+                echo "Exit code: $?"
+              fi
+      restartPolicy: Never
